@@ -103,7 +103,7 @@ def new(x:MixedDL,*args,**kwargs):
 
 
 # %%
-path = "/home/marcel/projetos/data/csgo_analyze/processed_test/de_mirage"
+path = "/home/marcel/projetos/data/csgo_analyze/processed_test"
 image_files = get_image_files(path)
 tabular_files = get_files(path, extensions=['.csv'])
 print(len(image_files))
@@ -193,17 +193,17 @@ full_csv.iloc[55,:]
 #class groups:
 #mainweapon, secweapon,flashbangs,hassmoke,hasmolotov,hashe,hashelmet,hasc4,hasdefusekit
 
-class_groups = {"mainweapon":L(["#na#",101,102,103,104,105,106,107,
+class_groups = {"mainweapon":L([101,102,103,104,105,106,107,
 201,202,203,204,205,206,
 301,302,303,304,305,306,307,308,309,310,311]),
-"secweapon":L("#na#",0,1,2,3,4,5,6,7,8,9,10),
-"flashbangs":L("#na#",0,1,2),
-"hassmoke":L("#na#",0,1),
-"hasmolotov":L("#na#",0,1),
-"hashe":L("#na#",0,1),
-"hashelmet":L("#na#",0,1),
-"hasc4":L("#na#",0,1),
-"hasdefusekit":L("#na#",0,1)}
+"secweapon":L(0,1,2,3,4,5,6,7,8,9,10),
+"flashbangs":L(0,1,2),
+"hassmoke":L(0,1),
+"hasmolotov":L(0,1),
+"hashe":L(0,1),
+"hashelmet":L(0,1),
+"hasc4":L(0,1),
+"hasdefusekit":L(0,1)}
 
 # %%
 
@@ -225,7 +225,7 @@ class Categorify_Custom(TabularProc):
         self.class_groups = class_groups
         
 
-    def encodes(self, to): to.transform(to.cat_names, partial(_apply_cats, self.classes, 1))
+    def encodes(self, to): to.transform(to.cat_names, partial(_apply_cats, self.classes, 0))
     def decodes(self, to): to.transform(to.cat_names, partial(_decode_cats, self.classes))
     def __getitem__(self,k): return self.classes[k]
 
