@@ -26,10 +26,11 @@ from fastai2.data.load import _FakeLoader, _loaders
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 import datetime
-
+from transformers import AlbertForSequenceClassification, AlbertConfig
+from fastai2.data.load import _FakeLoader, _loaders
 
 # %%
-from fastai2.data.load import _FakeLoader, _loaders
+
 class MixedDL():
     def __init__(self, tab_dl:TabDataLoader, vis_dl:TfmdDL, device='cuda:0'):
         "Stores away `tab_dl` and `vis_dl`, and overrides `shuffle_fn`"
@@ -103,12 +104,12 @@ def new(x:MixedDL,*args,**kwargs):
 
 
 # %%
-path = "/home/marcel/projetos/data/csgo_analyze/processed_test"
+path = "/home/marcel/projetos/data/csgo_analyze/processed_test/de_mirage"
 image_files = get_image_files(path)
 tabular_files = get_files(path, extensions=['.csv'])
 print(len(image_files))
 print(len(tabular_files))
-bs=32
+bs=55
 
 # %%
 def fileLabeller(o,**kwargs):
@@ -309,7 +310,7 @@ class TabularModelCustom(Module):
                 class_group_map[class_group_index]=[i]
         self.class_group_map = class_group_map
         if not is_listy(ps): ps = [ps]*len(layers)
-        self.embeds = nn.ModuleList([Embedding(index_ni[1], emb_sz_rule(index_ni[1])) for _,index_ni in class_groups_sizes.items() if index_ni[1]>3])
+        self.embeds = nn.ModuleList([Embedding(index_ni[1], emb_sz_rule(index_ni[1])) for _,index_ni in class_groups_sizes.items() if index_ni[1]>2])
         self.emb_drop = nn.Dropout(embed_p)
         self.bn_cont = nn.BatchNorm1d(n_cont) if bn_cont else None
 
@@ -369,7 +370,7 @@ class CustomMixedModel(nn.Module):
 
 
 # %%
-image_model =xresnet34()
+image_model =xresnet34_deeper(p=0.2)
 image_model.to("cuda:0")
 model = CustomMixedModel(image_model,tab_model)
 model = model.to("cuda:0")
