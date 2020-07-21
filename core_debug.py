@@ -284,7 +284,7 @@ class NormalizeImage():
 
     def __call__(self,tensor):
 
-        return torch.cat([(tensor[:,i,:,:]-self.mean[i])/self.std[i] for i in range(3)],dim=1)
+        return torch.stack([(tensor[:,i,:,:]-self.mean[i])/self.std[i] for i in range(3)],dim=1)
 
 class CSGORoundsDataset(torch.utils.data.Dataset):
     def __init__(self, image_paths: list, round_paths: list, tabular_x_data: pd.DataFrame, round_winners,
