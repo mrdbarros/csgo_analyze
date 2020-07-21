@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
 from transformers import BertModel, BertConfig, BertForSequenceClassification
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
+import time
 import re
 
 
@@ -238,8 +238,10 @@ class TransformPipeline():
 
     def __call__(self, o):
         res = o
+
         for transform in self.transforms:
             res = transform(res)
+
         return res
 
 
@@ -275,10 +277,19 @@ def calcNormWeights(imageList):
 # means:[tensor(0.0019), tensor(0.0040), tensor(0.0061)]
 # std:[tensor(0.0043), tensor(0.0084), tensor(0.0124)]
 
+class NormalizeImage():
+    def __init__(self,mean,std):
+        self.mean=mean
+        self.std=std
+
+    def __call__(self,tensor):
+
+        return torch.cat([(tensor[:,i,:,:]-self.mean[i])/self.std[i] for i in range(3)],dim=1)
+
 class CSGORoundsDataset(torch.utils.data.Dataset):
     def __init__(self, image_paths: list, round_paths: list, tabular_x_data: pd.DataFrame, round_winners,
                  image_transform=None, cat_transform=None,
-                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None):
+                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None,batch_transform=None):
 
         self.image_paths = image_paths
         cat_columns = [column for column in tabular_x_data.columns if column[column.rfind("_") + 1:] in x_category_map]
@@ -295,6 +306,7 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
         self.label_transform = label_transform
         self.x_category_map = x_category_map
         self.y_category_map = y_category_map
+        self.batch_transform = batch_transform
 
     def __getitem__(self, index: int):
         round_path = self.x_round_list[index]
@@ -303,18 +315,27 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
 
         inner_size = random.randint(1, len(indices))
         indices = indices[:inner_size]
+        transform_times = []
+        transform_times.append(time.time())
         images = self.open_round_images(indices)
+        transform_times.append(time.time())
         if not self.image_transform is None:
             tensor_image = torch.stack([self.image_transform(image) for image in images], dim=0)
+            transform_times.append(time.time())
+            tensor_image = self.batch_transform(tensor_image)
+            transform_times.append(time.time())
         if not self.cat_transform is None:
             cat_data = self.cat_transform(self.cat_data.iloc[indices, :])
 
         if not self.cont_transform is None:
+
             cont_data = self.cont_transform(self.cont_data.iloc[indices, :])
 
         if not self.label_transform is None:
+
             y = self.label_transform(self.y[round_path])
 
+        print(np.diff(np.array(transform_times)))
         return cat_data, cont_data, tensor_image, y
 
     def __len__(self):
@@ -348,17 +369,18 @@ cat_transforms = TransformPipeline([Categorize(x_category_map), ToTensor])
 cont_transforms = TransformPipeline([Normalize(train_tabular.iloc[:, :-2], category_map=x_category_map), ToTensor])
 label_transforms = TransformPipeline([Categorize(y_category_map, multicat=False), ToTensor])
 image_transforms = torchvision.transforms.Compose(
-    [torchvision.transforms.Resize(100), torchvision.transforms.ToTensor(),
-     torchvision.transforms.Normalize((0.0019, 0.0040, 0.0061), (0.0043, 0.0084, 0.0124))])
+    #[torchvision.transforms.Resize(200), torchvision.transforms.ToTensor()])
+    [torchvision.transforms.Resize(200), torchvision.transforms.ToTensor()])
+batch_transform = NormalizeImage((0.0019, 0.0040, 0.0061), (0.0043, 0.0084, 0.0124))
 
 train_x_tabular = train_tabular.iloc[:, :-2]
 train_dataset = CSGORoundsDataset(train_images, train_rounds, train_x_tabular, train_winners, image_transforms,
-                                  cat_transforms, cont_transforms, label_transforms, x_category_map, y_category_map)
+                                  cat_transforms, cont_transforms, label_transforms, x_category_map, y_category_map,batch_transform)
 
 valid_y_dict = valid_tabular["winner"]
 valid_x_tabular = valid_tabular.iloc[:, :-2]
 valid_dataset = CSGORoundsDataset(valid_images, valid_rounds, valid_x_tabular, valid_winners, image_transforms,
-                                  cat_transforms, cont_transforms, label_transforms, x_category_map, y_category_map)
+                                  cat_transforms, cont_transforms, label_transforms, x_category_map, y_category_map,batch_transform)
 
 
 # print(train_dataset[2])
@@ -392,16 +414,16 @@ def pad_snapshot_sequence(length):
     return _inner
 
 
-seq_size = 60
+seq_size = 30
 
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=6,
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, #num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=6,
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, #num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
 
-train_iter = iter(train_dl_mixed)
+#train_iter = iter(train_dl_mixed)
 
-print(next(train_iter))
+#print(next(train_iter))
 
 cont_names = ['t_1', 't_2', 't_3', 't_4', 't_5',
               'ct_1', 'ct_2', 'ct_3', 'ct_4', 'ct_5',
