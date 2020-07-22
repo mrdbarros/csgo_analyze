@@ -35,6 +35,14 @@ import re
 # from fastai2.vision.all import *
 # from fastai2.data.load import _FakeLoader, _loaders
 
+seq_size = 10
+bs = 4
+intermediate_size = 200
+tabular_output_size=200
+image_output_size = 200
+num_attention_heads=10
+
+
 def _get_files(p, fs, extensions=None):
     p = pathlib.Path(p)
     res = [p / f for f in fs if not f.startswith('.')
@@ -68,7 +76,7 @@ image_files = get_files(path, extensions=['.jpg'])
 tabular_files = get_files(path, extensions=['.csv'])
 print(len(image_files))
 print(len(tabular_files))
-bs = 4
+
 
 
 # renamed_files = 0
@@ -313,7 +321,7 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
         indices = [i for i, path_match in enumerate(self.image_paths)
                    if pathlib.Path(path_match).parent == round_path]
 
-        inner_size = random.randint(0, len(indices))
+        inner_size = random.randint(2, len(indices))
         indices = indices[:inner_size]
         transform_times = []
         transform_times.append(time.time())
@@ -335,7 +343,7 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
 
             y = self.label_transform(self.y[round_path])
 
-        print(np.diff(np.array(transform_times)))
+        #print(np.diff(np.array(transform_times)))
         return cat_data, cont_data, tensor_image, y,inner_size
 
     def __len__(self):
@@ -411,16 +419,16 @@ def pad_snapshot_sequence(length):
         cont_batch = default_collate(cont_batch)
         y_batch = default_collate(full_batch[3])
         image_batch = default_collate(image_batch)
+        attention_mask=default_collate(attention_mask)
         return cat_batch, cont_batch, image_batch, attention_mask, y_batch
 
     return _inner
 
 
-seq_size = 30
 
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=6,
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, #num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=6,
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, #num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
 
 #train_iter = iter(train_dl_mixed)
@@ -561,16 +569,17 @@ class CustomMixedModel(torch.nn.Module):
                                       for i in range(input_cat.shape[1])], dim=1)
         output_image = torch.stack([self.image_model(input_image[:, i,:, :, :])
                                       for i in range(input_image.shape[1])], dim=1)
-        logits = self.classifier(inputs_embeds=torch.cat((output_tabular, output_image),attention_mask=attention_mask, dim=-1))[0]
+        logits = self.classifier(inputs_embeds=torch.cat((output_tabular, output_image), dim=-1),attention_mask=attention_mask)[0]
 
         return logits
 
 
-image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False,num_classes=200)
+image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False,num_classes=image_output_size)
 image_model.to("cuda:0")
 
 # Initializing a BERT bert-base-uncased style configuration
-configuration = BertConfig(hidden_size=400, num_attention_heads=10,intermediate_size=200)
+configuration = BertConfig(hidden_size=tabular_output_size+image_output_size,
+                           num_attention_heads=num_attention_heads,intermediate_size=intermediate_size)
 
 class_model = BertForSequenceClassification(configuration)
 
