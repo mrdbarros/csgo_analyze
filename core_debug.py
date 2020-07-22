@@ -313,7 +313,7 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
         indices = [i for i, path_match in enumerate(self.image_paths)
                    if pathlib.Path(path_match).parent == round_path]
 
-        inner_size = random.randint(1, len(indices))
+        inner_size = random.randint(0, len(indices))
         indices = indices[:inner_size]
         transform_times = []
         transform_times.append(time.time())
@@ -336,7 +336,7 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
             y = self.label_transform(self.y[round_path])
 
         print(np.diff(np.array(transform_times)))
-        return cat_data, cont_data, tensor_image, y
+        return cat_data, cont_data, tensor_image, y,inner_size
 
     def __len__(self):
         return self.n_samples
@@ -390,17 +390,19 @@ def pad_snapshot_sequence(length):
         full_batch = list(zip(*batch))
         cat_batch = []
         cont_batch = []
-
+        attention_mask = []
         image_batch = []
         for i, image_sequence in enumerate(full_batch[2]):
             if length - image_sequence.shape[0] > 0:
                 pad_cat_cont = (0, 0, 0, length - image_sequence.shape[0])
                 pad_image = (0, 0, 0, 0, 0, 0, 0, length - image_sequence.shape[0])
-
+                attention_mask.append(torch.zeros(length))
+                attention_mask[i][:image_sequence.shape[0]] = 1.0
                 cat_batch.append(torch.nn.functional.pad(full_batch[0][i], pad_cat_cont, "constant", 0))  # cat
                 cont_batch.append(torch.nn.functional.pad(full_batch[1][i], pad_cat_cont, "constant", 0))  # cont
                 image_batch.append(torch.nn.functional.pad(image_sequence, pad_image, "constant", 0))  # image
             else:
+                attention_mask.append(torch.ones(length))
                 cat_batch.append(full_batch[0][i][:length])
                 cont_batch.append(full_batch[1][i][:length])
                 image_batch.append(full_batch[2][i][:length])
@@ -409,16 +411,16 @@ def pad_snapshot_sequence(length):
         cont_batch = default_collate(cont_batch)
         y_batch = default_collate(full_batch[3])
         image_batch = default_collate(image_batch)
-        return cat_batch, cont_batch, image_batch, y_batch
+        return cat_batch, cont_batch, image_batch, attention_mask, y_batch
 
     return _inner
 
 
 seq_size = 30
 
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, #num_workers=6,
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, #num_workers=6,
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=6,
                                              collate_fn=pad_snapshot_sequence(seq_size))
 
 #train_iter = iter(train_dl_mixed)
@@ -554,21 +556,21 @@ class CustomMixedModel(torch.nn.Module):
         # n_emb = sum(e.embedding_dim for e in self.embeds)
         self.classifier = class_model
 
-    def forward(self, input_cat, input_cont, input_image):
+    def forward(self, input_cat, input_cont, input_image,attention_mask):
         output_tabular = torch.stack([self.tab_model(input_cat[:, i, :], input_cont[:, i, :])
                                       for i in range(input_cat.shape[1])], dim=1)
         output_image = torch.stack([self.image_model(input_image[:, i,:, :, :])
                                       for i in range(input_image.shape[1])], dim=1)
-        logits = self.classifier(inputs_embeds=torch.cat((output_tabular, output_image), dim=-1))[0]
+        logits = self.classifier(inputs_embeds=torch.cat((output_tabular, output_image),attention_mask=attention_mask, dim=-1))[0]
 
         return logits
 
 
-image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet18', pretrained=False)
+image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False,num_classes=200)
 image_model.to("cuda:0")
 
 # Initializing a BERT bert-base-uncased style configuration
-configuration = BertConfig(hidden_size=1200, num_attention_heads=10,intermediate_size=200)
+configuration = BertConfig(hidden_size=400, num_attention_heads=10,intermediate_size=200)
 
 class_model = BertForSequenceClassification(configuration)
 
@@ -624,56 +626,54 @@ def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, t
     model.train()
     valid_loss = AverageMeter('Loss', ':.4e')
     valid_accuracy = AverageMeter('Acc', ':6.2f')
-    for _ in range(10):
-        for t, batch in enumerate(train_data_loader):
+    for t, batch in enumerate(train_data_loader):
 
-            x_input = batch[:-1]
-            y = batch[-1]
+        x_input = batch[:-1]
+        y = batch[-1]
 
-            y = y.cuda()
+        y = y.cuda()
 
-            # Forward pass: compute predicted y by passing x to the model.
+        # Forward pass: compute predicted y by passing x to the model.
+        y_pred = model(*[x_tensor.cuda() for x_tensor in x_input])
+
+        # Compute and print loss.
+        loss = loss_fn(y_pred, torch.flatten(y))
+        if t % 10 == 0:
+            print(t, "/", len(train_data_loader), loss.item())
+
+        # Before the backward pass, use the optimizer object to zero all of the
+        # gradients for the variables it will update (which are the learnable
+        # weights of the model). This is because by default, gradients are
+        # accumulated in buffers( i.e, not overwritten) whenever .backward()
+        # is called. Checkout docs of torch.autograd.backward for more details.
+        optimizer.zero_grad()
+
+        # Backward pass: compute gradient of the loss with respect to model
+        # parameters
+        loss.backward()
+
+        # Calling the step function on an Optimizer makes an update to its
+        # parameters
+        optimizer.step()
+        # scheduler.step()
+
+    model.eval()
+    for t, batch in enumerate(valid_data_loader):
+
+        x_input = batch[:-1]
+        y = batch[-1]
+        # Forward pass: compute predicted y by passing x to the model.
+        y = y.cuda()
+        with torch.no_grad():
             y_pred = model(*[x_tensor.cuda() for x_tensor in x_input])
 
             # Compute and print loss.
             loss = loss_fn(y_pred, torch.flatten(y))
             if t % 10 == 0:
-                print(t, "/", len(train_data_loader), loss.item())
-
-            # Before the backward pass, use the optimizer object to zero all of the
-            # gradients for the variables it will update (which are the learnable
-            # weights of the model). This is because by default, gradients are
-            # accumulated in buffers( i.e, not overwritten) whenever .backward()
-            # is called. Checkout docs of torch.autograd.backward for more details.
-            optimizer.zero_grad()
-
-            # Backward pass: compute gradient of the loss with respect to model
-            # parameters
-            loss.backward()
-
-            # Calling the step function on an Optimizer makes an update to its
-            # parameters
-            optimizer.step()
-            # scheduler.step()
-
-    model.eval()
-    for _ in range(10):
-        for t, batch in enumerate(valid_data_loader):
-
-            x_input = batch[:-1]
-            y = batch[-1]
-            # Forward pass: compute predicted y by passing x to the model.
-            y = y.cuda()
-            with torch.no_grad():
-                y_pred = model(*[x_tensor.cuda() for x_tensor in x_input])
-
-                # Compute and print loss.
-                loss = loss_fn(y_pred, torch.flatten(y))
-                if t % 10 == 0:
-                    print(t, "/", len(valid_data_loader), loss.item())
-                acc = accuracy(y_pred, y)
-                valid_accuracy.update(acc[0].item(), y.shape[0])
-                valid_loss.update(loss.item(), y.shape[0])
+                print(t, "/", len(valid_data_loader), loss.item())
+            acc = accuracy(y_pred, y)
+            valid_accuracy.update(acc[0].item(), y.shape[0])
+            valid_loss.update(loss.item(), y.shape[0])
 
     print(' * Acc {valid_accuracy.avg:.3f} Loss {valid_loss.avg:.3f}'
           .format(valid_accuracy=valid_accuracy, valid_loss=valid_loss))
