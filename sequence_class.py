@@ -22,6 +22,8 @@ img_size = 200
 path = "/home/marcel/projetos/data/csgo_analyze/processed_test"
 embeds_size = image_output_size + tabular_output_size
 
+
+
 image_files = data_loading.get_files(path, extensions=['.jpg'])
 tabular_files = data_loading.get_files(path, extensions=['.csv'])
 print(len(image_files))
@@ -125,10 +127,10 @@ valid_dataset = data_loading.CSGORoundsDataset(valid_images, valid_rounds, valid
                                                cat_transforms, cont_transforms, label_transforms, x_category_map,
                                                y_category_map, batch_transform)
 
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=6,
-                                             collate_fn=data_loading.pad_snapshot_sequence(seq_size), drop_last=True)
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=6,
-                                             collate_fn=data_loading.pad_snapshot_sequence(seq_size), drop_last=True)
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=5,
+                                             collate_fn=data_loading.pad_snapshot_sequence(seq_size), drop_last=False)
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=5,
+                                             collate_fn=data_loading.pad_snapshot_sequence(seq_size), drop_last=False)
 
 # tensor_to_image = torchvision.transforms.ToPILImage(mode="RGB")
 # train_example_batch = batch_transform.decode(next(iter(train_dl_mixed)))
@@ -169,55 +171,76 @@ for class_group, class_group_categories in x_category_map.items():
     category_groups_sizes[class_group] = (group_count, len(class_group_categories))
     group_count += 1
 category_list = [category for category in x_category_map]
-tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(cont_names), [200, 100], ps=[0.2, 0.2])
 
-image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False, num_classes=image_output_size)
-image_model.to("cuda:0")
+for i,optimizer_type in enumerate([torch.optim.RMSprop,torch.optim.AdamW,torch.optim.Adam]):
+    lr = 5e-5
+    n_epochs = 3
+    now = datetime.datetime.now()
+    creation_time = now.strftime("%H:%M")
+    tensorboard_writer = SummaryWriter(os.path.expanduser('~/projetos/data/csgo_analyze/experiment/tensorboard/') +
+                                       now.strftime("%Y-%m-%d/") + "opt-"+str(i) +"/"+ creation_time)
 
-# configuration = BertConfig(hidden_size=image_output_size+tabular_output_size,
-#                            num_attention_heads=num_attention_heads,intermediate_size=intermediate_size,hidden_dropout_prob=0.2,
-#                                  attention_probs_dropout_prob=0.2,output_hidden_states=True)
-#
-# class_model = BertModel(configuration)
+    tensorboard_class = training.TensorboardClass(tensorboard_writer)
 
-encoder_layer = torch.nn.TransformerEncoderLayer(d_model=image_output_size + tabular_output_size, nhead=4)
-seq_model = torch.nn.TransformerEncoder(encoder_layer, num_layers=4)
-# configuration = DistilBertConfig(dim=tabular_output_size+image_output_size,
-#                            n_heads=num_attention_heads,hidden_dim=intermediate_size,dropout=0.2,sinusoidal_pos_embds=True,
-#                                  attention_dropout=0.2)
-#
-# class_model = DistilBertForSequenceClassification(configuration)
+    tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(cont_names), [200, 100], ps=[0.2, 0.2])
 
-seq_model.to("cuda:0")
+    image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False, num_classes=image_output_size)
+    image_model.to("cuda:0")
 
-image_model.load_state_dict(
-    torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/image_output-200.pt')))
-tab_model.load_state_dict(
-    torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/tabular_output-200.pt')))
+    # configuration = BertConfig(hidden_size=image_output_size+tabular_output_size,
+    #                            num_attention_heads=num_attention_heads,intermediate_size=intermediate_size,hidden_dropout_prob=0.2,
+    #                                  attention_probs_dropout_prob=0.2,output_hidden_states=True)
+    #
+    # class_model = BertModel(configuration)
 
-model = models.CustomMixedModel(image_model, tab_model, seq_model)
-model = model.to("cuda:0")
+    encoder_layer = torch.nn.TransformerEncoderLayer(d_model=image_output_size + tabular_output_size, nhead=4)
+    seq_model = torch.nn.TransformerEncoder(encoder_layer, num_layers=4)
+    # configuration = DistilBertConfig(dim=tabular_output_size+image_output_size,
+    #                            n_heads=num_attention_heads,hidden_dim=intermediate_size,dropout=0.2,sinusoidal_pos_embds=True,
+    #                                  attention_dropout=0.2)
+    #
+    # class_model = DistilBertForSequenceClassification(configuration)
+
+    seq_model.to("cuda:0")
+    seq_model.load_state_dict(torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/seq_model-1.pt')))
+    image_model.load_state_dict(
+        torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/image_output-bceloss200-1.pt')))
+    tab_model.load_state_dict(
+        torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/tab_output-bceloss200-1.pt')))
 
 
-loss_fn = torch.nn.CrossEntropyLoss().cuda()
+    model = models.CustomMixedModel(image_model, tab_model, seq_model,image_output_size, embeds_size)
+    model = model.to("cuda:0")
+    # model.load_state_dict(
+    #     torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/full_model-0.pt')))
 
-lr = 5e-4
-n_epochs = 4
+    loss_fn = torch.nn.BCEWithLogitsLoss().cuda()
 
-now = datetime.datetime.now()
-creation_time = now.strftime("%H:%M")
-tensorboard_writer = SummaryWriter(os.path.expanduser('~/projetos/data/csgo_analyze/experiment/tensorboard/') +
-                                   now.strftime("%Y-%m-%d-") + creation_time)
 
-tensorboard_class = training.TensorboardClass(tensorboard_writer)
-# torch.set_num_threads(8)
-optimizer = torch.optim.Adam(model.parameters(), lr=lr  # ,betas=(0.6,0.99),weight_decay=1e-4
-                             )
 
-lmbda = lambda epoch: 0.2
-scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
-for epoch in range(n_epochs):
-    training.one_epoch(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class)
-    scheduler.step()
 
-torch.save(model.seq_model.state_dict(), str(pathlib.Path(path) / "seq_model.pt"))
+    # torch.set_num_threads(8)
+    optimizer = optimizer_type(model.parameters(), lr=lr  # ,betas=(0.6,0.99),weight_decay=1e-4
+                                 )
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, steps_per_epoch=len(train_dl_mixed), epochs=n_epochs)
+    for epoch in range(n_epochs):
+        print("epoch:",epoch)
+        training.one_epoch(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,scheduler,train_embeds=False,train_seq_model=False)
+        #torch.save(model.seq_model.state_dict(), str(pathlib.Path(path) / "seq_model-")+str(epoch)+".pt")
+        torch.save(model.state_dict(), str(pathlib.Path(path) / "full_model-")+str(epoch)+".pt")
+
+    lr=lr/10.0
+    optimizer = optimizer_type(model.parameters(), lr=lr  # ,betas=(0.6,0.99),weight_decay=1e-4
+         )
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, steps_per_epoch=len(train_dl_mixed), epochs=n_epochs)
+    for epoch in range(n_epochs):
+        print("epoch:",epoch)
+        training.one_epoch(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,scheduler,train_embeds=False,train_seq_model=True)
+        #torch.save(model.seq_model.state_dict(), str(pathlib.Path(path) / "seq_model-")+str(epoch)+".pt")
+        torch.save(model.state_dict(), str(pathlib.Path(path) / "full_model-unfrozen-seq_model")+str(epoch)+".pt")
+
+#torch.save(model.seq_model.state_dict(), str(pathlib.Path(path) / "seq_model.pt"))
+
+

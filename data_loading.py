@@ -233,10 +233,12 @@ class NormalizeImage():
 
 
 
+
 class CSGORoundsDataset(torch.utils.data.Dataset):
     def __init__(self, image_paths: list, round_paths: list, tabular_x_data: pd.DataFrame, round_winners,
                  image_transform=None, cat_transform=None,
-                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None,batch_transform=None):
+                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None,batch_transform=None,
+                 is_eval=False):
 
         self.image_paths = image_paths
         cat_columns = [column for column in tabular_x_data.columns if column[column.rfind("_") + 1:] in x_category_map]
@@ -254,23 +256,26 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
         self.x_category_map = x_category_map
         self.y_category_map = y_category_map
         self.batch_transform = batch_transform
+        self.is_eval = is_eval
 
     def __getitem__(self, index: int):
         round_path = self.x_round_list[index]
         indices = [i for i, path_match in enumerate(self.image_paths)
                    if pathlib.Path(path_match).parent == round_path]
+        if not self.is_eval:
+            inner_size = random.randint(2, len(indices))
+            indices = indices[:inner_size]
+        else:
+            print(round_path)
 
-        inner_size = random.randint(2, len(indices))
-        indices = indices[:inner_size]
-        transform_times = []
-        transform_times.append(time.time())
+
         images = self.open_round_images(indices)
-        transform_times.append(time.time())
+
         if not self.image_transform is None:
             tensor_image = torch.stack([self.image_transform(image) for image in images], dim=0)
-            transform_times.append(time.time())
+
             tensor_image = self.batch_transform(tensor_image)
-            transform_times.append(time.time())
+
         if not self.cat_transform is None:
             cat_data = self.cat_transform(self.cat_data.iloc[indices, :])
 
@@ -282,8 +287,9 @@ class CSGORoundsDataset(torch.utils.data.Dataset):
 
             y = self.label_transform(self.y[round_path])
 
-        #print(np.diff(np.array(transform_times)))
-        return cat_data, cont_data, tensor_image, y,inner_size
+
+        return cat_data, cont_data, tensor_image, y
+
 
     def __len__(self):
         return self.n_samples
@@ -303,9 +309,17 @@ def get_rounds_and_winners(tabular_df: pd.DataFrame):
         winners[round_path] = row['winner']
     return list(set(rounds)), winners
 
-def pad_snapshot_sequence(length):
+
+def pad_snapshot_sequence(length,is_eval=False):
     def _inner(batch):  # cat,cont,image,y
         full_batch = list(zip(*batch))
+
+        if is_eval:
+            for i in range(len(full_batch)-1):
+                full_batch[i]=[full_batch[i][0][:j] for j in range(1,full_batch[i][0].shape[0])]+[full_batch[i][0]]
+            full_batch[-1]=[full_batch[-1][0] for _ in range(1,full_batch[0][-1].shape[0])]+[full_batch[-1][0]]
+
+
         cat_batch = []
         cont_batch = []
         attention_mask = []
@@ -330,6 +344,9 @@ def pad_snapshot_sequence(length):
         y_batch = default_collate(full_batch[3])
         image_batch = default_collate(image_batch)
         attention_mask=default_collate(attention_mask)
-        return cat_batch, cont_batch, image_batch, attention_mask, y_batch
+        return cat_batch, cont_batch, image_batch, attention_mask, y_batch.float()
 
     return _inner
+
+
+

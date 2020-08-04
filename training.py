@@ -24,21 +24,10 @@ class AverageMeter(object):
         return fmtstr.format(**self.__dict__)
 
 
-def accuracy(output, target, topk=(1,)):
+def accuracy(output, target):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
+        return torch.sum(torch.round(torch.sigmoid(output)) == target).float() / output.shape[0]
 
 
 def validation_epoch(valid_data_loader, model, loss_fn, tensorboard_class):
@@ -53,13 +42,14 @@ def validation_epoch(valid_data_loader, model, loss_fn, tensorboard_class):
             # Forward pass: compute predicted y by passing x to the model.
             y = y.cuda()
             y_pred = model(*[x_tensor.cuda() for x_tensor in x_input])
+            print(y_pred)
 
             # Compute and print loss.
-            loss = loss_fn(y_pred, torch.flatten(y))
+            loss = loss_fn(y_pred, y)
             if t % 5 == 0:
                 print(t, "/", len(valid_data_loader), loss.item())
             acc = accuracy(y_pred, y)
-            valid_accuracy.update(acc[0].item(), y.shape[0])
+            valid_accuracy.update(acc.item(), y.shape[0])
             valid_loss.update(loss.item(), y.shape[0])
 
     print(' * Acc {valid_accuracy.avg:.3f} Loss {valid_loss.avg:.3f}'
@@ -71,7 +61,7 @@ def validation_epoch(valid_data_loader, model, loss_fn, tensorboard_class):
     tensorboard_class.i += 1
 
 
-def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, tensorboard_class):
+def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, tensorboard_class,scheduler,train_embeds,train_seq_model):
     model.train()
 
     for t, batch in enumerate(train_data_loader):
@@ -82,10 +72,10 @@ def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, t
         y = y.cuda()
 
         # Forward pass: compute predicted y by passing x to the model.
-        y_pred = model(*[x_tensor.cuda() for x_tensor in x_input])
+        y_pred = model(*[x_tensor.cuda() for x_tensor in x_input],train_embeds,train_seq_model)
 
         # Compute and print loss.
-        loss = loss_fn(y_pred, torch.flatten(y))
+        loss = loss_fn(y_pred, y)
         if (t + 1) % 5 == 0:
             print(t, "/", len(train_data_loader), loss.item())
 
@@ -102,9 +92,10 @@ def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, t
         # Calling the step function on an Optimizer makes an update to its
         # parameters
         optimizer.step()
-        # scheduler.step()
+        scheduler.step()
 
     validation_epoch(valid_data_loader, model, loss_fn, tensorboard_class)
+
 
 class TensorboardClass():
     def __init__(self, writer):
