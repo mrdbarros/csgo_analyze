@@ -9,6 +9,82 @@ import torchvision
 import PIL
 import time
 import random
+from __future__ import division
+import types
+import collections
+import numpy as np
+from random import shuffle
+from nvidia.dali.pipeline import Pipeline
+import nvidia.dali.ops as ops
+import nvidia.dali.types as types
+
+
+columns = ["t_1", "t_2", "t_3", "t_4", "t_5", "ct_1", "ct_2", "ct_3", "ct_4", "ct_5",
+           "t_1_blindtime", "t_2_blindtime", "t_3_blindtime", "t_4_blindtime", "t_5_blindtime",
+           "ct_1_blindtime", "ct_2_blindtime", "ct_3_blindtime", "ct_4_blindtime", "ct_5_blindtime",
+           "t_1_mainweapon", "t_1_secweapon", "t_1_flashbangs", "t_1_hassmoke", "t_1_hasmolotov", "t_1_hashe",
+           "t_1_armor", "t_1_hashelmet", "t_1_hasc4",
+           "t_2_mainweapon", "t_2_secweapon", "t_2_flashbangs", "t_2_hassmoke", "t_2_hasmolotov", "t_2_hashe",
+           "t_2_armor", "t_2_hashelmet", "t_2_hasc4",
+           "t_3_mainweapon", "t_3_secweapon", "t_3_flashbangs", "t_3_hassmoke", "t_3_hasmolotov", "t_3_hashe",
+           "t_3_armor", "t_3_hashelmet", "t_3_hasc4",
+           "t_4_mainweapon", "t_4_secweapon", "t_4_flashbangs", "t_4_hassmoke", "t_4_hasmolotov", "t_4_hashe",
+           "t_4_armor", "t_4_hashelmet", "t_4_hasc4",
+           "t_5_mainweapon", "t_5_secweapon", "t_5_flashbangs", "t_5_hassmoke", "t_5_hasmolotov", "t_5_hashe",
+           "t_5_armor", "t_5_hashelmet", "t_5_hasc4",
+           "ct_1_mainweapon", "ct_1_secweapon", "ct_1_flashbangs", "ct_1_hassmoke", "ct_1_hasmolotov", "ct_1_hashe",
+           "ct_1_armor", "ct_1_hashelmet", "ct_1_hasdefusekit",
+           "ct_2_mainweapon", "ct_2_secweapon", "ct_2_flashbangs", "ct_2_hassmoke", "ct_2_hasmolotov", "ct_2_hashe",
+           "ct_2_armor", "ct_2_hashelmet", "ct_2_hasdefusekit",
+           "ct_3_mainweapon", "ct_3_secweapon", "ct_3_flashbangs", "ct_3_hassmoke", "ct_3_hasmolotov", "ct_3_hashe",
+           "ct_3_armor", "ct_3_hashelmet", "ct_3_hasdefusekit",
+           "ct_4_mainweapon", "ct_4_secweapon", "ct_4_flashbangs", "ct_4_hassmoke", "ct_4_hasmolotov", "ct_4_hashe",
+           "ct_4_armor", "ct_4_hashelmet", "ct_4_hasdefusekit",
+           "ct_5_mainweapon", "ct_5_secweapon", "ct_5_flashbangs", "ct_5_hassmoke", "ct_5_hasmolotov", "ct_5_hashe",
+           "ct_5_armor", "ct_5_hashelmet", "ct_5_hasdefusekit",
+           "round_time","bomb_timeticking",
+           'related_image', 'winner']
+
+x_category_map = {"mainweapon": [0, 101, 102, 103, 104, 105, 106, 107,
+                                 201, 202, 203, 204, 205, 206,
+                                 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311],
+                  "secweapon": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                  "flashbangs": [0, 1, 2],
+                  "hassmoke": [0, 1],
+                  "hasmolotov": [0, 1],
+                  "hashe": [0, 1],
+                  "hashelmet": [0, 1],
+                  "hasc4": [0, 1],
+                  "hasdefusekit": [0, 1]}
+
+y_category_map = {"winner": ["t", "ct"]}
+
+cont_names = ['t_1', 't_2', 't_3', 't_4', 't_5',
+                  'ct_1', 'ct_2', 'ct_3', 'ct_4', 'ct_5',
+                  "t_1_blindtime", "t_2_blindtime", "t_3_blindtime", "t_4_blindtime", "t_5_blindtime",
+                  "ct_1_blindtime", "ct_2_blindtime", "ct_3_blindtime", "ct_4_blindtime", "ct_5_blindtime",
+                  "t_1_armor", "t_2_armor", "t_3_armor", "t_4_armor", "t_5_armor",
+                  "ct_1_armor", "ct_2_armor", "ct_3_armor", "ct_4_armor", "ct_5_armor", "round_time","bomb_timeticking"]
+cat_names = ["t_1_mainweapon", "t_1_secweapon", "t_1_flashbangs", "t_1_hassmoke", "t_1_hasmolotov", "t_1_hashe",
+             "t_1_hashelmet", "t_1_hasc4",
+             "t_2_mainweapon", "t_2_secweapon", "t_2_flashbangs", "t_2_hassmoke", "t_2_hasmolotov", "t_2_hashe",
+             "t_2_hashelmet", "t_2_hasc4",
+             "t_3_mainweapon", "t_3_secweapon", "t_3_flashbangs", "t_3_hassmoke", "t_3_hasmolotov", "t_3_hashe",
+             "t_3_hashelmet", "t_3_hasc4",
+             "t_4_mainweapon", "t_4_secweapon", "t_4_flashbangs", "t_4_hassmoke", "t_4_hasmolotov", "t_4_hashe",
+             "t_4_hashelmet", "t_4_hasc4",
+             "t_5_mainweapon", "t_5_secweapon", "t_5_flashbangs", "t_5_hassmoke", "t_5_hasmolotov", "t_5_hashe",
+             "t_5_hashelmet", "t_5_hasc4",
+             "ct_1_mainweapon", "ct_1_secweapon", "ct_1_flashbangs", "ct_1_hassmoke", "ct_1_hasmolotov", "ct_1_hashe",
+             "ct_1_hashelmet", "ct_1_hasdefusekit",
+             "ct_2_mainweapon", "ct_2_secweapon", "ct_2_flashbangs", "ct_2_hassmoke", "ct_2_hasmolotov", "ct_2_hashe",
+             "ct_2_hashelmet", "ct_2_hasdefusekit",
+             "ct_3_mainweapon", "ct_3_secweapon", "ct_3_flashbangs", "ct_3_hassmoke", "ct_3_hasmolotov", "ct_3_hashe",
+             "ct_3_hashelmet", "ct_3_hasdefusekit",
+             "ct_4_mainweapon", "ct_4_secweapon", "ct_4_flashbangs", "ct_4_hassmoke", "ct_4_hasmolotov", "ct_4_hashe",
+             "ct_4_hashelmet", "ct_4_hasdefusekit",
+             "ct_5_mainweapon", "ct_5_secweapon", "ct_5_flashbangs", "ct_5_hassmoke", "ct_5_hasmolotov", "ct_5_hashe",
+             "ct_5_hashelmet", "ct_5_hasdefusekit"]
 
 def _get_files(p, fs, extensions=None):
     p = pathlib.Path(p)
@@ -60,24 +136,19 @@ def filterTabularData(tabular_files,columns):
             new_csv = pd.read_csv(tab_file)
             new_csv['index'] = new_csv.index
             new_csv['related_image'] = str(tab_file.parent) + "/output_map" + new_csv['index'].astype(str).str.pad(width=2,
-                                                                                                                   fillchar="0") + ".jpg"
+                                                                                        fillchar="0") + ".jpg"
             winner = fileLabeller(tab_file)
-            new_csv['winner'] = winner
-            round_winners[tab_file] = winner
-            new_csv = new_csv.drop(columns=["index"])
-            new_csv.columns = columns
-            full_csv.append(new_csv)
+            if winner in ["t","ct"]:
+                new_csv['winner'] = winner
+                round_winners[tab_file] = winner
+                new_csv = new_csv.drop(columns=["index"])
+                new_csv.columns = columns
+                full_csv.append(new_csv)
     full_csv = pd.concat(full_csv, ignore_index=True).sort_values(by=['related_image'])
     return full_csv
 
-def filterImageData(image_files,full_csv):
-    filtered_image_files = []
-    for image_file in image_files:
-        if fileLabeller(image_file) in ["t", "ct"] and not os.stat(image_file.parent / "tabular.csv").st_size == 0 and \
-                str(image_file) in full_csv['related_image'].values:
-            filtered_image_files.append(image_file)
-        #else: print(image_file)
-    filtered_image_files.sort()
+def filterImageData(full_csv):
+    filtered_image_files = list(full_csv['related_image'].values)
     return filtered_image_files
 
 def randomSplitter(elements, valid_pct=0.2, seed=None, **kwargs):
@@ -98,6 +169,18 @@ def roundSplitter(filtered_image_files):
             train_image_files += [i]
         else:
             valid_image_files += [i]
+    return train_image_files, valid_image_files
+
+def folderSplitter(filtered_image_files):
+    train_image_files = []
+    valid_image_files = []
+    for i, o in enumerate(filtered_image_files):
+        if pathlib.Path(o).parts[-5] == "train":
+            train_image_files += [i]
+        elif pathlib.Path(o).parts[-5] == "val":
+            valid_image_files += [i]
+        else: print("invalid folder")
+
     return train_image_files, valid_image_files
 
 def ToTensor(o):
@@ -310,6 +393,9 @@ def get_rounds_and_winners(tabular_df: pd.DataFrame):
     return list(set(rounds)), winners
 
 
+
+
+
 def pad_snapshot_sequence(length,is_eval=False):
     def _inner(batch):  # cat,cont,image,y
         full_batch = list(zip(*batch))
@@ -328,13 +414,15 @@ def pad_snapshot_sequence(length,is_eval=False):
             if length - image_sequence.shape[0] > 0:
                 pad_cat_cont = (0, 0, 0, length - image_sequence.shape[0])
                 pad_image = (0, 0, 0, 0, 0, 0, 0, length - image_sequence.shape[0])
-                attention_mask.append(torch.ones(length).bool())
-                attention_mask[i][:image_sequence.shape[0]] = False
+                # attention_mask.append(torch.ones(length).bool())
+                attention_mask.append(torch.zeros(length))
+                attention_mask[i][:image_sequence.shape[0]] = 1
                 cat_batch.append(torch.nn.functional.pad(full_batch[0][i], pad_cat_cont, "constant", 0))  # cat
                 cont_batch.append(torch.nn.functional.pad(full_batch[1][i], pad_cat_cont, "constant", 0))  # cont
                 image_batch.append(torch.nn.functional.pad(image_sequence, pad_image, "constant", 0))  # image
             else:
-                attention_mask.append(torch.zeros(length).bool())
+                # attention_mask.append(torch.zeros(length).bool())
+                attention_mask.append(torch.ones(length))
                 cat_batch.append(full_batch[0][i][:length])
                 cont_batch.append(full_batch[1][i][:length])
                 image_batch.append(full_batch[2][i][:length])
@@ -350,3 +438,167 @@ def pad_snapshot_sequence(length,is_eval=False):
 
 
 
+class CSGORoundsDatasetSingleImage(torch.utils.data.Dataset):
+    def __init__(self, image_paths: list, tabular_x_data: pd.DataFrame, y_array, image_transform=None,
+                 cat_transform=None,
+                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None):
+        self.image_paths = image_paths
+        cat_columns = [column for column in tabular_x_data.columns if column[column.rfind("_") + 1:] in x_category_map]
+        cont_columns = [column for column in tabular_x_data.columns if
+                        not column[column.rfind("_") + 1:] in x_category_map]
+        self.cat_data = tabular_x_data[cat_columns]
+        self.cont_data = tabular_x_data[cont_columns]
+        self.y = y_array
+        self.n_samples = len(self.image_paths)
+        self.image_transform = image_transform
+        self.cat_transform = cat_transform
+        self.cont_transform = cont_transform
+        self.label_transform = label_transform
+        self.x_category_map = x_category_map
+        self.y_category_map = y_category_map
+
+    def __getitem__(self, index: int):
+        image = PIL.Image.open(self.image_paths[index])
+        if not self.image_transform is None:
+            tensor_image = self.image_transform(image)
+        if not self.cat_transform is None:
+            cat_data = self.cat_transform(self.cat_data.iloc[index, :])
+
+        if not self.cont_transform is None:
+            cont_data = self.cont_transform(self.cont_data.iloc[index, :])
+
+        if not self.label_transform is None:
+            y = self.label_transform(self.y.iloc[index])
+
+        return cat_data, cont_data, tensor_image, y.float()
+
+    def __len__(self):
+        return self.n_samples
+
+
+class ExternalInputIterator(object):
+    def __init__(self, image_paths: list, round_paths: list, tabular_x_data: pd.DataFrame, round_winners,
+                 image_transform=None, cat_transform=None,
+                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None,batch_transform=None,
+                 is_eval=False):
+
+
+        self.n = len(self.image_paths)
+        self.image_paths = image_paths
+        self.x_round_list = round_paths
+
+
+        self.tabular_dataset = CSGORoundsDatasetNoImages(image_paths,round_paths,tabular_x_data,round_winners,
+                                                     cat_transform,cont_transform,label_transform,x_category_map,
+                                                     y_category_map,is_eval)
+
+    def __iter__(self):
+        self.i = 0
+        self.order = range(self.n)
+        random.shuffle(self.order)
+        return self
+
+    def __next__(self):
+        image_batch = []
+
+        if self.i >= self.n:
+            raise StopIteration
+
+
+
+        for _ in range(self.batch_size):
+            round_path = self.x_round_list[self.i]
+            indices = [i for i, path_match in enumerate(self.image_paths)
+                       if pathlib.Path(path_match).parent == round_path]
+            round_images=[]
+            cat_data, cont_data, y= self.tabular_dataset[self.i]
+            for index in indices:
+                f = open(self.image_paths[index], 'rb')
+                round_images.append(np.frombuffer(f.read(), dtype = np.uint8))
+            image_batch.append(round_images)
+            self.i = self.i + 1
+
+        return image_batch
+
+    @property
+    def size(self,):
+        return self.n
+
+    next = __next__
+
+class ExternalSourcePipeline(Pipeline):
+    def __init__(self, batch_size,image_size, num_threads, device_id, external_data,seed):
+        super(ExternalSourcePipeline, self).__init__(batch_size,
+                                      num_threads,
+                                      device_id,
+                                      seed=seed)
+        self.input = ops.ExternalSource()
+
+        self.decode = ops.ImageDecoder(device = "mixed", output_type = types.RGB)
+        self.res = ops.Resize(device="gpu", resize_shorter = image_size)
+        self.external_data = external_data
+        self.iterator = iter(self.external_data)
+
+    def define_graph(self):
+        self.jpegs = self.input()
+        images = self.decode(self.jpegs)
+        images = self.res(images)
+        return images
+
+    def iter_setup(self):
+        try:
+            images = self.iterator.next()
+            self.feed_input(self.jpegs, images)
+
+        except StopIteration:
+            self.iterator = iter(self.external_data)
+            raise StopIteration
+
+class CSGORoundsDatasetNoImages(torch.utils.data.Dataset):
+    def __init__(self, image_paths: list, round_paths: list, tabular_x_data: pd.DataFrame, round_winners,
+                 cat_transform=None,
+                 cont_transform=None, label_transform=None, x_category_map: dict = None, y_category_map: dict = None,
+                 is_eval=False):
+
+        self.image_paths = image_paths
+        cat_columns = [column for column in tabular_x_data.columns if column[column.rfind("_") + 1:] in x_category_map]
+        cont_columns = [column for column in tabular_x_data.columns if
+                        not column[column.rfind("_") + 1:] in x_category_map]
+        self.cat_data = tabular_x_data[cat_columns]
+        self.cont_data = tabular_x_data[cont_columns]
+        self.y = round_winners
+        self.x_round_list = round_paths
+        self.n_samples = len(self.x_round_list)
+
+        self.cat_transform = cat_transform
+        self.cont_transform = cont_transform
+        self.label_transform = label_transform
+        self.x_category_map = x_category_map
+        self.y_category_map = y_category_map
+
+        self.is_eval = is_eval
+
+    def __getitem__(self, index: int):
+        round_path = self.x_round_list[index]
+        indices = [i for i, path_match in enumerate(self.image_paths)
+                   if pathlib.Path(path_match).parent == round_path]
+        if not self.is_eval:
+            inner_size = random.randint(2, len(indices))
+            indices = indices[:inner_size]
+        else:
+            print(round_path)
+
+
+        if not self.cat_transform is None:
+            cat_data = self.cat_transform(self.cat_data.iloc[indices, :])
+
+        if not self.cont_transform is None:
+
+            cont_data = self.cont_transform(self.cont_data.iloc[indices, :])
+
+        if not self.label_transform is None:
+
+            y = self.label_transform(self.y[round_path])
+
+
+        return cat_data, cont_data, y

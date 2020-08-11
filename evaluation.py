@@ -20,7 +20,7 @@ image_output_size = 200
 num_attention_heads = 10
 img_size = 200
 is_eval=True
-path = "/home/marcel/projetos/data/csgo_analyze/processed_test/de_mirage"
+path = "/home/marcel/projetos/data/csgo_analyze/processed_test/val"
 embeds_size = image_output_size + tabular_output_size
 
 image_files = data_loading.get_files(path, extensions=['.jpg'])
@@ -71,9 +71,8 @@ columns = ["t_1", "t_2", "t_3", "t_4", "t_5", "ct_1", "ct_2", "ct_3", "ct_4", "c
            'related_image', 'winner']
 
 full_csv = data_loading.filterTabularData(tabular_files, columns)
-filtered_image_files = data_loading.filterImageData(image_files, full_csv)
+filtered_image_files = data_loading.filterImageData(full_csv)
 
-splits = data_loading.roundSplitter(filtered_image_files)
 
 print(filtered_image_files[55])
 full_csv.iloc[55, :]

@@ -3,6 +3,7 @@ import torch
 import data_loading
 
 
+
 def emb_sz_rule(n_cat):
     "Rule of thumb to pick embedding size corresponding to `n_cat`"
     return min(600, round(1.6 * n_cat ** 0.56))
@@ -20,11 +21,12 @@ class LinBnDrop(torch.nn.Sequential):
         super().__init__(*layers)
 
 
+
 class TabularModelCustom(torch.nn.Module):
     "Basic model for tabular data."
 
     def __init__(self, category_list, class_groups_sizes, n_cont, layers, ps=None, embed_p=0.,
-                 use_bn=True, bn_final=False, bn_cont=True):
+                 use_bn=True, bn_final=True, bn_cont=True):
 
         super().__init__()
         ps = ps
@@ -72,6 +74,7 @@ class TabularModelCustom(torch.nn.Module):
         return self.layers(x)
 
 
+
 class CustomMixedModel(torch.nn.Module):
     def __init__(self, image_model, tab_model, seq_model, image_output_size, embeds_size):
         super(CustomMixedModel, self).__init__()
@@ -83,7 +86,7 @@ class CustomMixedModel(torch.nn.Module):
         self.seq_model = seq_model
         self.classifier = torch.nn.Sequential(LinBnDrop(200 + image_output_size
                                                         + embeds_size
-                                                        , 1, act=None, p=0.2))
+                                                        , 1, act=None, p=0.))
 
     def forward(self, input_cat, input_cont, input_image, attention_mask, train_embeds=True, train_seq_model=True):
         if train_embeds:
@@ -114,26 +117,28 @@ class CustomMixedModel(torch.nn.Module):
         return input_embed
 
     def forward_seq_model(self, input_embed, attention_mask):
-        bert_out = self.seq_model(input_embed.permute((1, 0, 2)),
-                                  src_key_padding_mask=attention_mask).permute((1, 0, 2))[:, 0]
+        # bert_out = self.seq_model(input_embed.permute((1, 0, 2)),
+        #                           src_key_padding_mask=attention_mask).permute((1, 0, 2))[:, 0]
+        bert_out = torch.mean(self.seq_model(inputs_embeds=input_embed,
+                                  attention_mask=attention_mask)[0],dim=1)
         bert_out = torch.nn.ReLU()(bert_out)
         return bert_out
 
 
 class CustomMixedModelSingleImage(torch.nn.Module):
-    def __init__(self, image_model, tab_model, image_output_size):
+    def __init__(self, image_model, tab_model, image_output_size,class_p):
         super(CustomMixedModelSingleImage, self).__init__()
         self.image_model = image_model
         # embedding types are primaries, secondaries, flashbangs and binaries
         # self.classifier = TabularModel_NoCat(emb_sizes,1536, 30,[400],ps=[0.1],use_bn=False)
         self.tab_model = tab_model
         # n_emb = sum(e.embedding_dim for e in self.embeds)
-        self.classifier = torch.nn.Sequential(LinBnDrop(200 + image_output_size, 1, act=None, p=0.))
+        self.classifier = torch.nn.Sequential(LinBnDrop(200 + image_output_size, 1, act=None, p=class_p))
 
     def forward(self, input_cat, input_cont, input_image):
         output_tabular = self.tab_model(input_cat, input_cont)
         output_image = self.image_model(input_image)
-        logits = self.classifier(torch.cat((output_tabular, output_image), dim=1))
+        logits = self.classifier(torch.nn.ReLU()(torch.cat((output_tabular, output_image), dim=1)))
 
         return logits
 
