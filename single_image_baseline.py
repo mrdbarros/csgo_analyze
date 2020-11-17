@@ -1,4 +1,5 @@
 import itertools
+import logging
 import random
 
 import pandas as pd
@@ -23,11 +24,12 @@ image_files = data_loading.get_files(path, extensions=['.jpg'])
 tabular_files = data_loading.get_files(path, extensions=['.csv'])
 print(len(image_files))
 print(len(tabular_files))
-bs = 360
+bs = 80
 final_bn=True
 image_output_size=200
 seed = 42
 experiment_name = "model_training"
+device = "cuda:0"
 
 
 torch.backends.cudnn.deterministic = True
@@ -35,9 +37,12 @@ torch.backends.cudnn.benchmark = False
 np.random.seed(seed)
 torch.manual_seed(seed)
 cut_size = 0
-n_epochs =15
+n_epochs =3
 lr=5e-4
-
+img_sizes = [600,400,200]
+seeds = [42,30,13]
+logging.basicConfig(filename='single_image_baseline.log', level=logging.INFO)
+img_size = 200
 
 
 if cut_size != 0:
@@ -56,6 +61,7 @@ filtered_image_files = data_loading.filterImageData(full_csv)
 
 # filtered_image_files=filtered_image_files[:2000]
 # full_csv=full_csv.iloc[:2000,:]
+#splits = data_loading.folderSplitter(filtered_image_files)
 splits = data_loading.folderSplitter(filtered_image_files)
 
 assert filtered_image_files[203]==full_csv.iloc[203, -2]
@@ -116,16 +122,24 @@ class TransformPipeline():
 
 
 train_tabular = full_csv.iloc[splits[0], :]
-train_images = [image for i, image in enumerate(filtered_image_files) if i in splits[0]]
+train_images = [image for i, image in enumerate(filtered_image_files) if image.rfind("/train")!=-1]
 valid_tabular = full_csv.iloc[splits[1], :]
-valid_images = [image for i, image in enumerate(filtered_image_files) if i in splits[1]]
+valid_images = [image for i, image in enumerate(filtered_image_files) if image.rfind("/val")!=-1]
 
 cat_transforms = TransformPipeline([Categorize(data_loading.x_category_map), ToTensor])
 cont_transforms = TransformPipeline([Normalize(train_tabular.iloc[:, :-2], category_map=data_loading.x_category_map), ToTensor])
 label_transforms = TransformPipeline([Categorize(data_loading.y_category_map, multicat=False), ToTensor])
-image_transforms = torchvision.transforms.Compose(
-    [torchvision.transforms.Resize(200), torchvision.transforms.ToTensor(),
-     torchvision.transforms.Normalize((0.0019, 0.0040, 0.0061), (0.0043, 0.0084, 0.0124))])
+# image_transforms = torchvision.transforms.Compose(
+#     [torchvision.transforms.Resize(200), torchvision.transforms.ToTensor(),
+#      torchvision.transforms.Normalize((0.0019, 0.0040, 0.0061), (0.0043, 0.0084, 0.0124))])
+
+#for seed,img_size in itertools.product(seeds,img_sizes):
+
+image_transforms = [torchvision.transforms.ToTensor(),#data_loading.transposeLycon,
+     torchvision.transforms.Normalize((255*0.0019, 255*0.0040, 255*0.0061), (255*0.0043, 255*0.0084, 255*0.0124))]
+if img_size != 800:
+    image_transforms = [data_loading.resize_lycon(img_size)]+image_transforms
+image_transforms = torchvision.transforms.Compose(image_transforms)
 train_y_series = train_tabular["winner"]
 train_x_tabular = train_tabular.iloc[:, :-2]
 train_dataset = data_loading.CSGORoundsDatasetSingleImage(train_images, train_x_tabular, train_y_series, image_transforms,
@@ -136,13 +150,14 @@ valid_x_tabular = valid_tabular.iloc[:, :-2]
 valid_dataset = data_loading.CSGORoundsDatasetSingleImage(valid_images, valid_x_tabular, valid_y_series, image_transforms,
                                   cat_transforms, cont_transforms, label_transforms, data_loading.x_category_map, data_loading.y_category_map)
 
-print(train_dataset[2])
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=6
+#print(train_dataset[2])
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=5
                                              )
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=6
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=5
                                            )
 
-
+iter_train_dl_mixed = iter(train_dl_mixed)
+print(next(iter_train_dl_mixed))
 group_count = 0
 category_groups_sizes = {}
 for class_group, class_group_categories in data_loading.x_category_map.items():
@@ -156,26 +171,26 @@ category_list = data_loading.cat_names
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(data_loading.cont_names), [200, 100], ps=[0.2, 0.2],
+tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(data_loading.cont_names), [200, 100], ps=[0.1, 0.1],
                                       embed_p=0.,bn_final=final_bn)
 
 
 
 image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False,num_classes=image_output_size)
-image_model.to("cuda:0")
+image_model.to(device)
 
 # image_model.load_state_dict(
 #     torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/image_output-bceloss200-1.pt')))
 # tab_model.load_state_dict(
 #     torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/tab_output-bceloss200-1.pt')))
 model = models.CustomMixedModelSingleImage(image_model, tab_model,image_output_size,class_p=0.)
-model = model.to("cuda:0")
+model = model.to(device)
 
 
 
 
 
-loss_fn = torch.nn.BCEWithLogitsLoss().cuda()
+loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
 
 
 
@@ -184,8 +199,8 @@ loss_fn = torch.nn.BCEWithLogitsLoss().cuda()
 now = datetime.datetime.now()
 creation_time = now.strftime("%H:%M")
 tensorboard_writer = SummaryWriter(os.path.expanduser('~/projetos/data/csgo_analyze/experiment/tensorboard/single_imageclass/') +
-                                   experiment_name+"/"+now.strftime("%Y-%m-%d")+"/"+creation_time +"/"+ "bn_final-"+str(final_bn)+
-                                   "-seed-"+str(seed))
+                                   experiment_name+"/"+now.strftime("%Y-%m-%d")+"/"+creation_time +"/"+
+                                   "seed-"+str(seed))
 
 
 class TensorboardClass():
@@ -197,11 +212,12 @@ class TensorboardClass():
 tensorboard_class = TensorboardClass(tensorboard_writer)
 # torch.set_num_threads(8)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, steps_per_epoch=len(train_dl_mixed),
                                                 epochs=n_epochs)
 for epoch in range(n_epochs):
-    training.one_epoch(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,scheduler)
+    logging.info("epoch: %s",epoch)
+    training.one_epoch(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,scheduler,device)
     torch.save(model.tab_model.state_dict(),
                str(pathlib.Path(path) / "tab_output-bceloss") + str(image_output_size)+"-" +str(epoch)+ ".pt")
     torch.save(model.image_model.state_dict(),

@@ -1,6 +1,7 @@
+import data_loading
 import torch
 
-import data_loading
+
 
 
 
@@ -76,7 +77,7 @@ class TabularModelCustom(torch.nn.Module):
 
 
 class CustomMixedModel(torch.nn.Module):
-    def __init__(self, image_model, tab_model, seq_model, image_output_size, embeds_size):
+    def __init__(self, image_model, tab_model, seq_model, image_output_size, embeds_size,prepare_and_pad,max_image_batch):
         super(CustomMixedModel, self).__init__()
         self.image_model = image_model
         # embedding types are primaries, secondaries, flashbangs and binaries
@@ -87,32 +88,43 @@ class CustomMixedModel(torch.nn.Module):
         self.classifier = torch.nn.Sequential(LinBnDrop(200 + image_output_size
                                                         + embeds_size
                                                         , 1, act=None, p=0.))
-
+        self.prepare_and_pad = prepare_and_pad
+        self.max_image_batch = max_image_batch
     def forward(self, input_cat, input_cont, input_image, attention_mask, train_embeds=True, train_seq_model=True):
+        valid_sizes = torch.sum((attention_mask == 1), dim=1)
         if train_embeds:
-            input_embed = self.forward_embeds(input_cat, input_cont, input_image)
+            input_embed = self.forward_embeds(input_cat, input_cont, input_image,valid_sizes)
         else:
             with torch.no_grad():
-                input_embed = self.forward_embeds(input_cat, input_cont, input_image)
+
+                input_embed = self.forward_embeds(input_cat, input_cont, input_image,valid_sizes)
+
+        input_embed=self.prepare_and_pad(input_embed,valid_sizes)
 
         if train_seq_model:
+
             bert_out = self.forward_seq_model(input_embed, attention_mask)
         else:
             with torch.no_grad():
                 bert_out = self.forward_seq_model(input_embed, attention_mask)
 
-        mask_size = torch.sum((attention_mask == True), dim=1)
+
+
         output = self.classifier(
-            torch.cat((input_embed[range(input_embed.shape[0]), (input_embed.shape[1] - mask_size - 1)], bert_out),
+            torch.cat((input_embed[range(input_embed.shape[0]), valid_sizes-1], bert_out),
                       dim=1))
         # output = self.classifier(input_embed[range(input_embed.shape[0]), (input_embed.shape[1] - mask_size - 1)])
         # output = self.classifier(bert_out)
         return output
 
-    def forward_embeds(self, input_cat, input_cont, input_image):
-        input_embed = torch.stack([torch.cat((self.tab_model(input_cat[:, i, :], input_cont[:, i, :]),
-                                              self.image_model(input_image[:, i, :, :, :])), dim=1)
-                                   for i in range(input_cat.shape[1])], dim=1)
+    def forward_embeds(self, input_cat, input_cont, input_image,valid_size):
+        n_batches = (input_image.shape[0]//self.max_image_batch)+1*(input_image.shape[0]%self.max_image_batch>0)
+
+        tab_out = self.tab_model(input_cat,input_cont)
+        image_out = torch.cat([self.image_model(input_image[i*self.max_image_batch:min((i+1)*self.max_image_batch,input_image.shape[0])])
+                                 for i in range(n_batches)],dim=0)
+        # comprehension to break inputs in 'n_batches' of 'self.max_image_batch' size
+        input_embed = torch.cat((tab_out,image_out),dim=1)
         input_embed = torch.nn.ReLU()(input_embed)
         return input_embed
 
