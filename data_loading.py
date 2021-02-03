@@ -3,7 +3,6 @@ import os
 import pathlib
 import pandas as pd
 import torch
-from torch.utils.data.dataloader import default_collate
 import numpy as np
 import torchvision
 import PIL
@@ -131,20 +130,21 @@ def filterTabularData(tabular_files,columns):
     full_csv = []
     round_winners = {}
     for i, tab_file in enumerate(tabular_files):
-        if i % 50 == 0:
-            logging.info("processing file: %s of %s", i, len(tabular_files))
-        if not os.stat(tab_file).st_size == 0 and os.path.isfile(tab_file.parent / "winner.txt"):
-            new_csv = pd.read_csv(tab_file)
-            new_csv['index'] = new_csv.index
-            new_csv['related_image'] = str(tab_file.parent) + "/output_map" + new_csv['index'].astype(str).str.pad(width=2,
-                                                                                        fillchar="0") + ".jpg"
-            winner = fileLabeller(tab_file)
-            if winner in ["t","ct"]:
-                new_csv['winner'] = winner
-                round_winners[tab_file] = winner
-                new_csv = new_csv.drop(columns=["index"])
-                new_csv.columns = columns
-                full_csv.append(new_csv)
+        if tab_file.name == "periodic_data.csv":
+            if i % 50 == 0:
+                logging.info("processing file: %s of %s", i, len(tabular_files))
+            if not os.stat(tab_file).st_size == 0 and os.path.isfile(tab_file.parent / "winner.txt"):
+                new_csv = pd.read_csv(tab_file)
+                new_csv['index'] = new_csv.index
+                new_csv['related_image'] = str(tab_file.parent) + "/output_map" + new_csv['index'].astype(str).str.pad(width=2,
+                                                                                            fillchar="0") + ".jpg"
+                winner = fileLabeller(tab_file)
+                if winner in ["t","ct"]:
+                    new_csv['winner'] = winner
+                    round_winners[tab_file] = winner
+                    new_csv = new_csv.drop(columns=["index"])
+                    new_csv.columns = columns
+                    full_csv.append(new_csv)
     full_csv = pd.concat(full_csv, ignore_index=True).sort_values(by=['related_image'])
     return full_csv
 

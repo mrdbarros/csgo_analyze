@@ -4,7 +4,6 @@ import random
 
 import pandas as pd
 import torch
-from torch.utils.tensorboard import SummaryWriter
 import datetime
 import pathlib
 import os
@@ -15,16 +14,12 @@ import data_loading
 import models
 import training
 
-
-
-
-
-path = "/home/marcel/projetos/data/csgo_analyze/processed"
+path = "/home/marcel/projetos/data/csgo_analyze/processed/val"
 image_files = data_loading.get_files(path, extensions=['.jpg'])
 tabular_files = data_loading.get_files(path, extensions=['.csv'])
 print(len(image_files))
 print(len(tabular_files))
-bs = 25
+bs = 400
 final_bn=True
 image_output_size=200
 seed = 42
@@ -41,9 +36,8 @@ n_epochs =3
 lr=5e-4
 img_sizes = [600,400,200]
 seeds = [42,30,13]
-logging.basicConfig(filename='single_image_baseline.log', level=logging.INFO)
-img_size = 350
-
+logging.basicConfig(filename='single_image_eval.log', level=logging.INFO)
+img_size = 200
 
 if cut_size != 0:
     randomlist = random.sample(range(len(tabular_files)), cut_size)
@@ -52,7 +46,7 @@ if cut_size != 0:
 
 print(image_files[0])
 print(data_loading.fileLabeller(image_files[0]))
-
+tabular_files = [fileName for fileName in tabular_files if pathlib.Path(fileName).name == "periodic_data.csv"]
 
 full_csv=data_loading.filterTabularData(tabular_files,data_loading.columns)
 
@@ -69,7 +63,8 @@ assert filtered_image_files[203]==full_csv.iloc[203, -2]
 # class groups:
 # mainweapon, secweapon,flashbangs,hassmoke,hasmolotov,hashe,hashelmet,hasc4,hasdefusekit
 
-
+distinct_matches = list(set(pathlib.Path(tab_file).parent.parent for tab_file in tabular_files))
+distinct_rounds = list(set(pathlib.Path(tab_file).parent for tab_file in tabular_files))
 
 def ToTensor(o):
     return torch.from_numpy(o)
@@ -117,17 +112,11 @@ class TransformPipeline():
             res = transform(res)
         return res
 
-
-
-
-
-train_tabular = full_csv.iloc[splits[0], :]
-train_images = [filtered_image_files[i] for i in splits[0]]
-valid_tabular = full_csv.iloc[splits[1], :]
-valid_images = [filtered_image_files[i] for i in splits[1]]
+valid_tabular = full_csv
+valid_images = filtered_image_files
 
 cat_transforms = TransformPipeline([Categorize(data_loading.x_category_map), ToTensor])
-cont_transforms = TransformPipeline([Normalize(train_tabular.iloc[:, :-2], category_map=data_loading.x_category_map), ToTensor])
+cont_transforms = TransformPipeline([Normalize(valid_tabular.iloc[:, :-2], category_map=data_loading.x_category_map), ToTensor])
 label_transforms = TransformPipeline([Categorize(data_loading.y_category_map, multicat=False), ToTensor])
 # image_transforms = torchvision.transforms.Compose(
 #     [torchvision.transforms.Resize(200), torchvision.transforms.ToTensor(),
@@ -140,24 +129,16 @@ image_transforms = [torchvision.transforms.ToTensor(),#data_loading.transposeLyc
 if img_size != 800:
     image_transforms = [data_loading.resize_lycon(img_size)]+image_transforms
 image_transforms = torchvision.transforms.Compose(image_transforms)
-train_y_series = train_tabular["winner"]
-train_x_tabular = train_tabular.iloc[:, :-2]
-train_dataset = data_loading.CSGORoundsDatasetSingleImage(train_images, train_x_tabular, train_y_series, image_transforms,
-                                  cat_transforms, cont_transforms, label_transforms, data_loading.x_category_map, data_loading.y_category_map)
 
 valid_y_series = valid_tabular["winner"]
 valid_x_tabular = valid_tabular.iloc[:, :-2]
 valid_dataset = data_loading.CSGORoundsDatasetSingleImage(valid_images, valid_x_tabular, valid_y_series, image_transforms,
                                   cat_transforms, cont_transforms, label_transforms, data_loading.x_category_map, data_loading.y_category_map)
 
-#print(train_dataset[2])
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=5
-                                             )
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=5
-                                           )
 
-iter_train_dl_mixed = iter(train_dl_mixed)
-print(next(iter_train_dl_mixed))
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=False)           
+
+
 group_count = 0
 category_groups_sizes = {}
 for class_group, class_group_categories in data_loading.x_category_map.items():
@@ -172,61 +153,41 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(data_loading.cont_names), [200, 100], ps=[0.2, 0.2],
-                                      embed_p=0.,bn_final=final_bn)
+                                      embed_p=0.2,bn_final=final_bn)
 
 
 
 image_model = torch.hub.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=False,num_classes=image_output_size)
 image_model.to(device)
 
-# image_model.load_state_dict(
-#     torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/image_output-bceloss200-1.pt')))
+
 # tab_model.load_state_dict(
 #     torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed_test/tab_output-bceloss200-1.pt')))
-model = models.CustomMixedModelSingleImage(image_model, tab_model,image_output_size,class_p=0.1)
+model = models.CustomMixedModelSingleImage(image_model, tab_model,image_output_size,class_p=0.2)
 model = model.to(device)
 
 
-
+model.load_state_dict(
+    torch.load(os.path.expanduser('~/projetos/data/csgo_analyze/processed/full_model-bceloss200-0.pt')))
 
 
 loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
 
+def validation_cycle(image_files,valid_data_loader, model, loss_fn,device,**kwargs):
+    model.eval()
+    countImage=0
+    for t, batch in enumerate(valid_data_loader):
 
+        with torch.no_grad():
+            loss,y_pred,y = training.generic_forwardpass(batch,model,loss_fn,device,**kwargs)
+            data = {'File': image_files[countImage:(countImage+y_pred.shape[0])],
+                    'Pred': torch.flatten(torch.sigmoid(y_pred)).cpu().detach().numpy()
+                    }
+            df = pd.DataFrame(data, columns = ['File', 'Pred'])
+            if t % 5 == 0:
+                logging.info("%s / %s = %s", t, len(valid_data_loader), loss.item())
+            acc = training.accuracy(y_pred, y)
+            countImage+=y_pred.shape[0]
 
-
-
-now = datetime.datetime.now()
-creation_time = now.strftime("%H:%M")
-tensorboard_writer = SummaryWriter(os.path.expanduser('~/projetos/data/csgo_analyze/experiment/tensorboard/single_imageclass/') +
-                                   experiment_name+"/"+now.strftime("%Y-%m-%d")+"/"+creation_time +"/"+
-                                   "seed-"+str(seed))
-
-
-class TensorboardClass():
-    def __init__(self, writer):
-        self.i = 0
-        self.writer = writer
-
-
-tensorboard_class = TensorboardClass(tensorboard_writer)
-# torch.set_num_threads(8)
-
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-for epoch in range(n_epochs):
-    logging.info("epoch: %s",epoch)
-    training.one_epoch_singleimage(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,device)
-    torch.save(model.state_dict(),
-               str(pathlib.Path(path) / "full_model-bceloss") + str(image_output_size)+"-" +str(epoch)+ ".pt")
-    # torch.save(model.tab_model.state_dict(),
-    #            str(pathlib.Path(path) / "tab_output-bceloss") + str(image_output_size)+"-" +str(epoch)+ ".pt")
-    # torch.save(model.image_model.state_dict(),
-    #            str(pathlib.Path(path) / "image_output-bceloss") + str(image_output_size)+"-" +str(epoch)+  ".pt")
-
-
-
-
-
-
+validation_cycle(valid_images,valid_dl_mixed,model,loss_fn,device)
 
