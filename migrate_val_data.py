@@ -21,13 +21,7 @@ for i,match in enumerate(distinct_matches):
         path_to_move = train_path
     else:
         path_to_move = val_path
-    folder_number = int(match.parts[-1])
-    while True:
-        if not pathlib.Path(path_to_move + "/" + match.parts[-2] + "/" + str(folder_number)).exists():
-            shutil.move(match, path_to_move + "/" + match.parts[-2] + "/" + str(folder_number))
-            break
-        else:
-            folder_number+=1
+    folder_name = match.parts[-1]
+    shutil.move(match, path_to_move + "/" + match.parts[-2] + "/" + folder_name)
 
     
-print(distinct_matches)

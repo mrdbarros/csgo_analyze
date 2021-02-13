@@ -51,7 +51,7 @@ class TabularModelCustom(torch.nn.Module):
         n_emb = sum(e.embedding_dim * len(class_group_map[i]) for i, e in enumerate(self.embeds)) + binary_size
         self.n_emb, self.n_cont = n_emb, n_cont
         sizes = [n_emb + n_cont] + layers
-        actns = [torch.nn.ReLU(inplace=True) for _ in range(len(sizes) - 2)]
+        actns = [torch.nn.ReLU(inplace=True) for _ in range(len(sizes) - 1)]
         _layers = [LinBnDrop(sizes[i], sizes[i + 1], bn=use_bn and (i != len(actns) - 1 or bn_final), p=p, act=a)
                    for i, (p, a) in enumerate(zip(ps, actns))]
 
@@ -145,7 +145,8 @@ class CustomMixedModelSingleImage(torch.nn.Module):
         # self.classifier = TabularModel_NoCat(emb_sizes,1536, 30,[400],ps=[0.1],use_bn=False)
         self.tab_model = tab_model
         # n_emb = sum(e.embedding_dim for e in self.embeds)
-        self.classifier = torch.nn.Sequential(LinBnDrop(200 + image_output_size, 1, act=None, p=class_p))
+        self.classifier = torch.nn.Sequential(LinBnDrop(50 + image_output_size, 40, act=torch.nn.ReLU(), p=class_p),
+                                                LinBnDrop(40, 1, act=None, p=class_p))
 
     def forward(self, input_cat, input_cont, input_image):
         output_tabular = self.tab_model(input_cat, input_cont)

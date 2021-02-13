@@ -79,7 +79,7 @@ def train_cycle(loss_fn, model, train_data_loader, optimizer,scheduler,device,**
             logging.info("%s / %s = %s", t, len(train_data_loader), loss.item())
         generic_backwardpass(loss, optimizer, scheduler)
 
-def validation_cycle(valid_data_loader, model, loss_fn, tensorboard_class,device,**kwargs):
+def validation_cycle(valid_data_loader, model, loss_fn,device,**kwargs):
     model.eval()
     valid_loss = AverageMeter('Loss', ':.4e')
     valid_accuracy = AverageMeter('Acc', ':6.2f')
@@ -96,11 +96,7 @@ def validation_cycle(valid_data_loader, model, loss_fn, tensorboard_class,device
 
     logging.info(' * Acc {valid_accuracy.avg:.3f} Loss {valid_loss.avg:.3f}'
           .format(valid_accuracy=valid_accuracy, valid_loss=valid_loss))
-    tensorboard_class.writer.add_scalar("loss:",
-                                        valid_loss.avg, tensorboard_class.i)
-    tensorboard_class.writer.add_scalar("accuracy:",
-                                        valid_accuracy.avg, tensorboard_class.i)
-    tensorboard_class.i += 1
+
 
 
 def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, tensorboard_class,scheduler,device,**kwargs):
@@ -109,7 +105,7 @@ def one_epoch(loss_fn, model, train_data_loader, valid_data_loader, optimizer, t
     validation_cycle(valid_data_loader, model, loss_fn, tensorboard_class,device,**kwargs)
 
 
-def one_epoch_singleimage(loss_fn, model, train_data_loader, valid_data_loader, optimizer, tensorboard_class,device):
+def one_epoch_singleimage(loss_fn, model, train_data_loader, valid_data_loader, optimizer,device):
     model.train()
     valid_loss = AverageMeter('Loss', ':.4e')
     valid_accuracy = AverageMeter('Acc', ':6.2f')
@@ -169,13 +165,3 @@ def one_epoch_singleimage(loss_fn, model, train_data_loader, valid_data_loader, 
     logging.info(' * Acc {valid_accuracy.avg:.3f} Loss {valid_loss.avg:.3f}'
           .format(valid_accuracy=valid_accuracy, valid_loss=valid_loss))
 
-    tensorboard_class.writer.add_scalar("loss:",
-                                        valid_loss.avg, tensorboard_class.i)
-    tensorboard_class.writer.add_scalar("accuracy:",
-                                        valid_accuracy.avg, tensorboard_class.i)
-    tensorboard_class.i += 1
-
-class TensorboardClass():
-    def __init__(self, writer):
-        self.i = 0
-        self.writer = writer

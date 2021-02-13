@@ -14,6 +14,8 @@ import numpy as np
 import data_loading
 import models
 import training
+import _pickle as pickle
+
 
 
 
@@ -26,7 +28,7 @@ print(len(image_files))
 print(len(tabular_files))
 bs = 25
 final_bn=True
-image_output_size=200
+image_output_size=50
 seed = 42
 experiment_name = "model_training"
 device = "cuda:0"
@@ -36,13 +38,13 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 np.random.seed(seed)
 torch.manual_seed(seed)
-cut_size = 0
+cut_size = 1000
 n_epochs =3
 lr=5e-4
 img_sizes = [600,400,200]
 seeds = [42,30,13]
 logging.basicConfig(filename='single_image_baseline.log', level=logging.INFO)
-img_size = 350
+img_size = 300
 
 
 if cut_size != 0:
@@ -93,29 +95,6 @@ class Categorize():
         return np.array(categories)
 
 
-class Normalize():
-    def __init__(self, tabular_df: pd.DataFrame, category_map):
-        self.means = [tabular_df[column].mean() for column in tabular_df.columns
-                      if not column[column.rfind("_") + 1:] in category_map]
-        self.std = [tabular_df[column].std() for column in tabular_df.columns
-                    if not column[column.rfind("_") + 1:] in category_map]
-
-    def __call__(self, o: pd.DataFrame):
-        ret = o.copy()
-        for i, column in enumerate(ret.index):
-            ret[column] = (o[column] - self.means[i]) / self.std[i]
-        return ret.astype("float32").values
-
-
-class TransformPipeline():
-    def __init__(self, transforms: list):
-        self.transforms = transforms
-
-    def __call__(self, o):
-        res = o
-        for transform in self.transforms:
-            res = transform(res)
-        return res
 
 
 
@@ -126,9 +105,13 @@ train_images = [filtered_image_files[i] for i in splits[0]]
 valid_tabular = full_csv.iloc[splits[1], :]
 valid_images = [filtered_image_files[i] for i in splits[1]]
 
-cat_transforms = TransformPipeline([Categorize(data_loading.x_category_map), ToTensor])
-cont_transforms = TransformPipeline([Normalize(train_tabular.iloc[:, :-2], category_map=data_loading.x_category_map), ToTensor])
-label_transforms = TransformPipeline([Categorize(data_loading.y_category_map, multicat=False), ToTensor])
+cont_normalizer = data_loading.Normalize(train_tabular.iloc[:, :-2], category_map=data_loading.x_category_map)
+with open(str(pathlib.Path(path)/"cont_normalizer.pkl"), 'wb') as output:
+    pickle.dump(cont_normalizer, output,-1)
+
+cat_transforms = data_loading.TransformPipeline([Categorize(data_loading.x_category_map), ToTensor])
+cont_transforms = data_loading.TransformPipeline([cont_normalizer, ToTensor])
+label_transforms = data_loading.TransformPipeline([Categorize(data_loading.y_category_map, multicat=False), ToTensor])
 # image_transforms = torchvision.transforms.Compose(
 #     [torchvision.transforms.Resize(200), torchvision.transforms.ToTensor(),
 #      torchvision.transforms.Normalize((0.0019, 0.0040, 0.0061), (0.0043, 0.0084, 0.0124))])
@@ -151,9 +134,9 @@ valid_dataset = data_loading.CSGORoundsDatasetSingleImage(valid_images, valid_x_
                                   cat_transforms, cont_transforms, label_transforms, data_loading.x_category_map, data_loading.y_category_map)
 
 #print(train_dataset[2])
-train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=5
+train_dl_mixed = torch.utils.data.DataLoader(train_dataset, batch_size=bs, shuffle=True, num_workers=0
                                              )
-valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=5
+valid_dl_mixed = torch.utils.data.DataLoader(valid_dataset, batch_size=bs, shuffle=True, num_workers=0
                                            )
 
 iter_train_dl_mixed = iter(train_dl_mixed)
@@ -171,7 +154,7 @@ category_list = data_loading.cat_names
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(data_loading.cont_names), [200, 100], ps=[0.2, 0.2],
+tab_model = models.TabularModelCustom(category_list, category_groups_sizes, len(data_loading.cont_names), [200, 50], ps=[0.2, 0.2],
                                       embed_p=0.,bn_final=final_bn)
 
 
@@ -188,35 +171,21 @@ model = model.to(device)
 
 
 
-
-
 loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
-
-
 
 
 
 now = datetime.datetime.now()
 creation_time = now.strftime("%H:%M")
-tensorboard_writer = SummaryWriter(os.path.expanduser('~/projetos/data/csgo_analyze/experiment/tensorboard/single_imageclass/') +
-                                   experiment_name+"/"+now.strftime("%Y-%m-%d")+"/"+creation_time +"/"+
-                                   "seed-"+str(seed))
 
 
-class TensorboardClass():
-    def __init__(self, writer):
-        self.i = 0
-        self.writer = writer
-
-
-tensorboard_class = TensorboardClass(tensorboard_writer)
 # torch.set_num_threads(8)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 for epoch in range(n_epochs):
     logging.info("epoch: %s",epoch)
-    training.one_epoch_singleimage(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer, tensorboard_class,device)
+    training.one_epoch_singleimage(loss_fn, model, train_dl_mixed, valid_dl_mixed, optimizer,device)
     torch.save(model.state_dict(),
                str(pathlib.Path(path) / "full_model-bceloss") + str(image_output_size)+"-" +str(epoch)+ ".pt")
     # torch.save(model.tab_model.state_dict(),

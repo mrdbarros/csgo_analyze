@@ -14,11 +14,7 @@ import numpy as np
 from random import shuffle
 import logging
 import lycon
-
-# from nvidia.dali.pipeline import Pipeline
-# import nvidia.dali.ops as ops
-# import nvidia.dali.types as types
-# from nvidia.dali.plugin.pytorch import DALIClassificationIterator as PyTorchIterator
+import matplotlib.pyplot as plt
 
 
 columns = ["round_time","bomb_timeticking","t_1", "t_2", "t_3", "t_4", "t_5", "ct_1", "ct_2", "ct_3", "ct_4", "ct_5",
@@ -241,8 +237,12 @@ class Normalize():
 
     def __call__(self, o: pd.DataFrame):
         ret = o.copy()
-        for i, column in enumerate(ret.columns):
-            ret[column] = (o[column] - self.means[i]) / self.std[i]
+        if isinstance(ret,pd.Series):
+            for i, column in enumerate(ret.index):
+                ret[column] = (o[column] - self.means[i]) / self.std[i]
+        else:
+            for i, column in enumerate(ret.columns):
+                ret[column] = (o[column] - self.means[i]) / self.std[i]
         return ret.astype("float32").values
 
     def decode(self,o:pd.DataFrame):
