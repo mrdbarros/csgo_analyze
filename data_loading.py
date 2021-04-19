@@ -183,7 +183,22 @@ def folderSplitter(filtered_image_files):
 def ToTensor(o):
     return torch.from_numpy(o)
 
+class Categorize_SingleImage():
+    def __init__(self, category_map: list = None, multicat=True):
+        self.category_map = category_map
+        self.multicat = multicat
 
+    def __call__(self, df_row: pd.DataFrame):
+        categories = []
+        if self.multicat:
+            for cat in df_row.index:
+                group = cat[cat.rfind("_") + 1:]
+                category = self.category_map[group].index(df_row[cat])
+                categories.append(category)
+        else:
+            category = self.category_map["winner"].index(df_row)
+            categories.append(category)
+        return np.array(categories)
 
 class Categorize():
     def __init__(self, category_map: list = None, ordered_category_names = None,multicat=True):

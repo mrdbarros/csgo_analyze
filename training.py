@@ -1,4 +1,6 @@
 import logging
+import pathlib
+import pandas as pd
 
 import torch
 class AverageMeter(object):
@@ -79,23 +81,39 @@ def train_cycle(loss_fn, model, train_data_loader, optimizer,scheduler,device,**
             logging.info("%s / %s = %s", t, len(train_data_loader), loss.item())
         generic_backwardpass(loss, optimizer, scheduler)
 
-def validation_cycle(valid_data_loader, model, loss_fn,device,**kwargs):
+def validation_cycle(valid_data_loader, model, loss_fn,device,image_files=None,**kwargs):
     model.eval()
     valid_loss = AverageMeter('Loss', ':.4e')
     valid_accuracy = AverageMeter('Acc', ':6.2f')
+    countImage=0
+    prob_CT = torch.empty(0)
+    y_agg = torch.empty(0)
     for t, batch in enumerate(valid_data_loader):
 
         with torch.no_grad():
             loss,y_pred,y = generic_forwardpass(batch,model,loss_fn,device,**kwargs)
             if t % 5 == 0:
                 logging.info("%s / %s = %s", t, len(valid_data_loader), loss.item())
+            if not image_files is None:
+                prob_CT = torch.cat((prob_CT,torch.flatten(torch.sigmoid(y_pred)).cpu().detach()))
+                y_agg = torch.cat((y_agg,torch.flatten(y).cpu().detach()))
+                
             acc = accuracy(y_pred, y)
             valid_accuracy.update(acc.item(), y.shape[0])
             valid_loss.update(loss.item(), y.shape[0])
-
-
+            countImage+=y_pred.shape[0]
+    if not image_files is None:
+        prob_T = 1.0- prob_CT
+        data = {'File': image_files[:prob_CT.shape[0]],
+                'Prob_CT': prob_CT.numpy(),
+                'Prob_T': prob_T.numpy(),
+                'Winner': y_agg.numpy()
+                }
+        df = pd.DataFrame(data, columns = ['File', 'Prob_CT','Prob_T','Winner'])
+        print(df)
     logging.info(' * Acc {valid_accuracy.avg:.3f} Loss {valid_loss.avg:.3f}'
           .format(valid_accuracy=valid_accuracy, valid_loss=valid_loss))
+    return df
 
 
 
